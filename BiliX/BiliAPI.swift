@@ -86,7 +86,21 @@ enum BiliAPI {
 
     static func region(_ id: Int, page: Int) async throws -> [BiliVideo] {
         let data = try await payload("/x/web-interface/newlist", ["rid":String(id), "ps":"20", "pn":String(page)]) as? Object
-        return try videos(data?["archives"])
+        let primary = try videos(data?["archives"])
+        // The recent-upload endpoint can repeat the same small window across pages.
+        // The region dynamic endpoint is an independent source for this category.
+        if page > 1 {
+            do {
+                let alternative = try await payload("/x/web-interface/dynamic/region", ["rid":String(id), "ps":"30", "pn":String(page)]) as? Object
+                let secondary = try videos(alternative?["archives"])
+                var seen = Set<String>()
+                return (primary + secondary).filter { seen.insert($0.bvid).inserted }
+            } catch {
+                // Keep the working recent-upload results when the alternative is blocked.
+                return primary
+            }
+        }
+        return primary
     }
     static func feed(page: Int) async throws -> [BiliVideo] {
         let data = try await payload("/x/web-interface/wbi/index/top/feed/rcmd", ["ps":"20", "fresh_type":"3", "fresh_idx":String(page), "fresh_idx_1h":String(page)], signed: true) as? Object
