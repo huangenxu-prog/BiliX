@@ -94,6 +94,9 @@ struct VideoRow: View {
 struct VideoDetailView: View {
     let video: BiliVideo
     @State private var expanded = false
+    @State private var descriptionText = ""
+    @State private var related: [BiliVideo] = []
+    @State private var relatedError: String?
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 15) {
@@ -104,7 +107,7 @@ struct VideoDetailView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(video.title).font(.headline).foregroundStyle(BiliTheme.primary)
                         Text(BiliTime.relative(video.publishedAt)).font(.caption).foregroundStyle(BiliTheme.secondary)
-                        if expanded { Text("视频说明请在原视频页面查看。").font(.footnote).foregroundStyle(.secondary) }
+                        if expanded && !descriptionText.isEmpty { Text(descriptionText).font(.footnote).foregroundStyle(.secondary) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -121,12 +124,25 @@ struct VideoDetailView: View {
                 }
                 Divider()
                 Text("相关推荐").font(.headline)
-                Text("相关推荐将在数据接口验证后接入。").font(.footnote).foregroundStyle(.secondary)
+                if let relatedError { Text(relatedError).font(.footnote).foregroundStyle(.secondary) }
+                ForEach(related) { item in
+                    NavigationLink(value: item) { VideoRow(video: item) }.buttonStyle(.plain)
+                }
             }
             .padding(16)
         }
         .toolbar(.hidden, for: .tabBar)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: video.bvid) {
+            descriptionText = ""
+            related = []
+            relatedError = nil
+            async let desc = BiliAPI.description(for: video.bvid)
+            async let recommendations = BiliAPI.related(to: video.bvid)
+            descriptionText = (try? await desc) ?? ""
+            do { related = try await recommendations }
+            catch { relatedError = "暂时无法加载相关推荐" }
+        }
     }
 }
 
