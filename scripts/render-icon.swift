@@ -23,8 +23,8 @@ func roundedStroke(_ rect: NSRect, radius: CGFloat, width: CGFloat) {
 // Antennas
 for (x1, y1, x2, y2) in [(424.0, 727.0, 365.0, 810.0), (601.0, 727.0, 663.0, 810.0)] {
     let path = NSBezierPath()
-    path.move(to: NSPoint(x: x1, y: y1))
-    path.line(to: NSPoint(x: x2, y: y2))
+    path.move(to: NSPoint(x: CGFloat(x1), y: CGFloat(y1)))
+    path.line(to: NSPoint(x: CGFloat(x2), y: CGFloat(y2)))
     path.lineWidth = 55
     path.lineCapStyle = .round
     pink().setStroke()
