@@ -35,6 +35,7 @@ struct DiscoverView: View {
     @State private var hasMore = true
     @State private var loading = false
     @State private var error: String?
+    @State private var paginationNotice: String?
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -74,7 +75,7 @@ struct DiscoverView: View {
                         Button("重试") { Task { await loadPage(revision) } }
                     } else if loading {
                         ProgressView().frame(maxWidth: .infinity)
-                    } else if hasMore && !videos.isEmpty {
+                    } else if !videos.isEmpty {
                         // Explicit fallback: a one-point onAppear sentinel is not
                         // reliable on every SwiftUI scroll/layout transition.
                         Button {
@@ -82,7 +83,7 @@ struct DiscoverView: View {
                             Task { await loadPage(current) }
                         } label: {
                             HStack(spacing: 8) {
-                                Text("加载更多")
+                                Text(paginationNotice == nil ? "加载更多" : "继续尝试加载")
                                 Image(systemName: "chevron.down")
                             }
                             .font(.footnote)
@@ -93,8 +94,13 @@ struct DiscoverView: View {
                         }
                         .buttonStyle(.plain)
                         .onAppear {
+                            guard hasMore else { return }
                             let current = revision
                             Task { await loadPage(current) }
+                        }
+                        if let paginationNotice {
+                            Text(paginationNotice).font(.caption2).foregroundStyle(BiliTheme.secondary)
+                                .frame(maxWidth: .infinity)
                         }
                     } else if !hasMore && videos.isEmpty {
                         ContentUnavailableView("暂无视频", systemImage: "play.rectangle")
@@ -111,6 +117,7 @@ struct DiscoverView: View {
                     loading = false
                     hasMore = true
                     error = nil
+                    paginationNotice = nil
                 }
                 if nextPage == 1 { await loadPage(revision) }
             }
@@ -120,9 +127,10 @@ struct DiscoverView: View {
         }
     }
     @MainActor private func loadPage(_ requestRevision: Int) async {
-        guard revision == requestRevision, loadedRevision == revision, hasMore, !loading else { return }
+        guard revision == requestRevision, loadedRevision == revision, !loading else { return }
         loading = true
         error = nil
+        paginationNotice = nil
         defer { if revision == requestRevision { loading = false } }
         do {
             // Some B站 category pages overlap heavily. A duplicate-only page
@@ -146,7 +154,12 @@ struct DiscoverView: View {
                 if !unique.isEmpty { break }
             }
             videos.append(contentsOf: additions)
+            // Never hide the manual retry control based solely on duplicates.
+            // Avoid automatic request loops when an endpoint returns no new items.
             hasMore = !reachedEnd && !additions.isEmpty
+            if additions.isEmpty {
+                paginationNotice = reachedEnd ? "当前接口返回空页，点击可重新尝试" : "连续几页内容重复，点击可继续查找"
+            }
         } catch {
             guard revision == requestRevision, !Task.isCancelled else { return }
             self.error = error.localizedDescription
