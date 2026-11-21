@@ -4,7 +4,7 @@ import WebKit
 struct RootView: View {
     var body: some View {
         TabView {
-            NavigationStack { DiscoverView() }
+            DiscoverView()
                 .tabItem { Label("发现", systemImage: "play.rectangle") }
             NavigationStack { PlaceholderView(title: "收藏", subtitle: "稍后接入本地收藏") }
                 .tabItem { Label("收藏", systemImage: "bookmark") }
@@ -83,7 +83,7 @@ struct VideoRow: View {
                 Text(video.title).font(.subheadline.weight(.medium)).foregroundStyle(BiliTheme.primary).lineLimit(2)
                 Spacer(minLength: 0)
                 Text(video.author).font(.caption).foregroundStyle(BiliTheme.secondary).lineLimit(1)
-                Text(video.publishedAt, style: .relative).font(.caption2).foregroundStyle(BiliTheme.secondary)
+                Text(BiliTime.relative(video.publishedAt)).font(.caption2).foregroundStyle(BiliTheme.secondary)
             }
             .frame(height: 85, alignment: .top)
             Spacer(minLength: 0)
@@ -103,7 +103,7 @@ struct VideoDetailView: View {
                 Button { expanded.toggle() } label: {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(video.title).font(.headline).foregroundStyle(BiliTheme.primary)
-                        Text(video.publishedAt, style: .relative).font(.caption).foregroundStyle(BiliTheme.secondary)
+                        Text(BiliTime.relative(video.publishedAt)).font(.caption).foregroundStyle(BiliTheme.secondary)
                         if expanded { Text("视频说明请在原视频页面查看。").font(.footnote).foregroundStyle(.secondary) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -148,12 +148,13 @@ struct BiliWebPlayer: UIViewRepresentable {
         view.isOpaque = false
         view.backgroundColor = .black
         view.configuration.allowsInlineMediaPlayback = true
+        view.allowsBackForwardNavigationGestures = false
         return view
     }
     func updateUIView(_ view: WKWebView, context: Context) {
         guard let safe = bvid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://player.bilibili.com/player.html?bvid=\(safe)&autoplay=0") else { return }
-        if view.url != url { view.load(URLRequest(url: url)) }
+        if view.url?.absoluteString != url.absoluteString { view.load(URLRequest(url: url)) }
     }
 }
 
@@ -163,5 +164,18 @@ struct PlaceholderView: View {
     var body: some View {
         ContentUnavailableView(title, systemImage: "rectangle.stack", description: Text(subtitle))
             .navigationTitle(title)
+    }
+}
+
+enum BiliTime {
+    static func relative(_ date: Date) -> String {
+        let seconds = max(0, Int(Date().timeIntervalSince(date)))
+        if seconds < 60 { return "刚刚" }
+        if seconds < 3600 { return "\(seconds / 60)分钟前" }
+        if seconds < 86400 { return "\(seconds / 3600)小时前" }
+        if seconds < 604800 { return "\(seconds / 86400)天前" }
+        if seconds < 2592000 { return "\(seconds / 604800)周前" }
+        if seconds < 31536000 { return "\(seconds / 2592000)个月前" }
+        return "\(seconds / 31536000)年前"
     }
 }
