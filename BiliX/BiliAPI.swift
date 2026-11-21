@@ -1,129 +1,108 @@
 import Foundation
+import CryptoKit
 
-struct BiliVideo: Identifiable, Hashable {
+struct BiliVideo: Identifiable, Hashable, Codable {
     let bvid: String
     let title: String
     let author: String
     let cover: URL?
     let publishedAt: Date
     let mid: Int?
+    let duration: String
     var id: String { bvid }
 }
 
 enum BiliAPI {
-    enum APIError: LocalizedError {
-        case invalidResponse
-        case blocked
-        var errorDescription: String? {
-            switch self {
-            case .invalidResponse: "B站接口返回了无法解析的数据。"
-            case .blocked: "B站接口拒绝了本次请求；可能需要登录或调整接口方案。"
-            }
-        }
+    typealias Object = [String: Any]
+    struct Failure: LocalizedError {
+        let reason: String
+        var errorDescription: String? { reason }
     }
-
-    static func related(to bvid: String) async throws -> [BiliVideo] {
-        guard let safe = bvid.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let url = URL(string: "https://api.bilibili.com/x/web-interface/archive/related?bvid=\(safe)") else {
-            throw APIError.invalidResponse
-        }
-        let data = try await fetch(url)
-        let payload = try JSONDecoder().decode(RelatedResponse.self, from: data)
-        guard payload.code == 0 else { throw APIError.blocked }
-        return (payload.data ?? []).compactMap { item in
-            guard let bvid = item.bvid else { return nil }
-            return BiliVideo(bvid: bvid, title: item.title ?? "",
-                author: item.owner?.name ?? "未知UP主",
-                cover: normalizedCover(item.pic),
-                publishedAt: Date(timeIntervalSince1970: TimeInterval(item.pubdate ?? 0)),
-                mid: item.owner?.mid)
-        }
-    }
-
-    static func description(for bvid: String) async throws -> String {
-        var components = URLComponents(string: "https://api.bilibili.com/x/web-interface/view")!
-        components.queryItems = [URLQueryItem(name: "bvid", value: bvid)]
-        let data = try await fetch(components.url!)
-        let payload = try JSONDecoder().decode(VideoDetailResponse.self, from: data)
-        guard payload.code == 0 else { throw APIError.blocked }
-        return payload.data?.desc ?? ""
-    }
-
-    private static func normalizedCover(_ value: String?) -> URL? {
-        let raw = value ?? ""
-        return URL(string: raw.hasPrefix("//") ? "https:" + raw : raw)
-    }
-
-    private static func fetch(_ url: URL) async throws -> Data {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 15
+    static func request(_ path: String, _ query: String = "") async throws -> Object {
+        var parts = URLComponents(string: "https://api.bilibili.com" + path)!
+        parts.percentEncodedQuery = query.isEmpty ? nil : query
+        var request = URLRequest(url: parts.url!)
+        request.timeoutInterval = 18
         request.setValue("https://www.bilibili.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-        guard http.statusCode == 200 else { throw APIError.blocked }
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let root = try JSONSerialization.jsonObject(with: data) as? Object else {
+            throw Failure(reason: "暂时无法读取 B站响应")
+        }
+        return root
+    }
+    static func payload(_ path: String, _ params: [String: String], signed: Bool = false) async throws -> Any {
+        var args = params
+        var key = ""
+        if signed {
+            let nav = try await request("/x/web-interface/nav")
+            guard let data = nav["data"] as? Object, let images = data["wbi_img"] as? Object else {
+                throw Failure(reason: "无法获取搜索签名")
+            }
+            let source = ["img_url", "sub_url"].compactMap { (images[$0] as? String).flatMap(URL.init(string:))?.deletingPathExtension().lastPathComponent }.joined()
+            let bytes = Array(source.utf8)
+            guard bytes.count == 64 else { throw Failure(reason: "接口签名无效") }
+            let order = [46,47,18,2,53,8,23,32,15,50,10,31,58,3,45,35,27,43,5,49,33,9,42,19,29,28,14,39,12,38,41,13]
+            key = String(decoding: order.map { bytes[$0] }, as: UTF8.self)
+            args["wts"] = String(Int(Date().timeIntervalSince1970))
+        }
+        let safe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+        var query = args.keys.sorted().map { name in
+            let value = args[name] ?? ""
+            let filtered = signed ? value.filter { !"!'()*".contains($0) } : value
+            return name + "=" + (filtered.addingPercentEncoding(withAllowedCharacters: safe) ?? "")
+        }.joined(separator: "&")
+        if signed {
+            let digest = Insecure.MD5.hash(data: Data((query + key).utf8))
+            query += "&w_rid=" + digest.map { String(format: "%02x", $0) }.joined()
+        }
+        let root = try await request(path, query)
+        guard root["code"] as? Int == 0, let data = root["data"] else {
+            throw Failure(reason: root["message"] as? String ?? "B站暂未返回数据")
+        }
         return data
     }
 
-    static func search(_ keyword: String) async throws -> [BiliVideo] {
-        var components = URLComponents(string: "https://api.bilibili.com/x/web-interface/wbi/search/type")!
-        components.queryItems = [
-            URLQueryItem(name: "search_type", value: "video"),
-            URLQueryItem(name: "keyword", value: keyword),
-            URLQueryItem(name: "page", value: "1")
-        ]
-        let data = try await fetch(components.url!)
-        let result = try JSONDecoder().decode(SearchResponse.self, from: data)
-        guard result.code == 0 else { throw APIError.blocked }
-        return (result.data?.result ?? []).compactMap { item in
-            guard let bvid = item.bvid, !bvid.isEmpty else { return nil }
-            let raw = item.pic ?? ""
-            let coverString = raw.hasPrefix("//") ? "https:" + raw : raw
-            return BiliVideo(bvid: bvid,
-                             title: (item.title ?? "").replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression),
-                             author: item.author ?? "未知UP主",
-                             cover: URL(string: coverString),
-                             publishedAt: Date(timeIntervalSince1970: TimeInterval(item.pubdate ?? 0)),
-                             mid: item.mid)
+    static func videos(_ raw: Any?) throws -> [BiliVideo] {
+        guard let rows = raw as? [Object] else { throw Failure(reason: "视频列表格式异常") }
+        var seen = Set<String>()
+        return rows.compactMap { row in
+            guard let id = row["bvid"] as? String, !id.isEmpty, seen.insert(id).inserted,
+                  let title = row["title"] as? String else { return nil }
+            let owner = row["owner"] as? Object ?? [:]
+            var pic = row["pic"] as? String ?? ""
+            if pic.hasPrefix("//") { pic = "https:" + pic }
+            pic = pic.replacingOccurrences(of: "http://", with: "https://")
+            let seconds = row["duration"] as? Int
+            let duration = seconds.map { String(format: "%d:%02d", $0 / 60, $0 % 60) }
+            return BiliVideo(bvid: id, title: title.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression),
+                author: owner["name"] as? String ?? row["author"] as? String ?? "",
+                cover: URL(string: pic), publishedAt: Date(timeIntervalSince1970: Double(row["pubdate"] as? Int ?? row["created"] as? Int ?? 0)),
+                mid: owner["mid"] as? Int ?? row["mid"] as? Int,
+                duration: duration ?? row["duration"] as? String ?? row["length"] as? String ?? "")
         }
     }
-}
 
-private struct SearchResponse: Decodable {
-    let code: Int
-    let data: SearchData?
-}
-private struct SearchData: Decodable {
-    let result: [SearchItem]?
-}
-private struct SearchItem: Decodable {
-    let bvid: String?
-    let title: String?
-    let author: String?
-    let pic: String?
-    let pubdate: Int?
-    let mid: Int?
-}
-
-private struct RelatedResponse: Decodable {
-    let code: Int
-    let data: [RelatedItem]?
-}
-private struct RelatedItem: Decodable {
-    let bvid: String?
-    let title: String?
-    let pic: String?
-    let pubdate: Int?
-    let owner: VideoOwner?
-}
-private struct VideoOwner: Decodable {
-    let mid: Int?
-    let name: String?
-}
-private struct VideoDetailResponse: Decodable {
-    let code: Int
-    let data: VideoDetailData?
-}
-private struct VideoDetailData: Decodable {
-    let desc: String?
+    static func feed() async throws -> [BiliVideo] {
+        let data = try await payload("/x/web-interface/wbi/index/top/feed/rcmd", ["ps":"20", "fresh_type":"3", "fresh_idx":"1"], signed: true) as? Object
+        return try videos(data?["item"])
+    }
+    static func search(_ keyword: String) async throws -> [BiliVideo] {
+        let data = try await payload("/x/web-interface/wbi/search/type", ["search_type":"video", "keyword":keyword, "page":"1"], signed: true) as? Object
+        return try videos(data?["result"])
+    }
+    static func creator(_ mid: Int, page: Int) async throws -> ([BiliVideo], Bool) {
+        let data = try await payload("/x/space/wbi/arc/search", ["mid":String(mid),"pn":String(page),"ps":"30","order":"pubdate"], signed: true) as? Object
+        let result = try videos((data?["list"] as? Object)?["vlist"])
+        let count = (data?["page"] as? Object)?["count"] as? Int
+        return (result, !result.isEmpty && (count.map { page * 30 < $0 } ?? (result.count == 30)))
+    }
+    static func related(to bvid: String) async throws -> [BiliVideo] {
+        try await videos(payload("/x/web-interface/archive/related", ["bvid":bvid]))
+    }
+    static func description(for bvid: String) async throws -> String {
+        let data = try await payload("/x/web-interface/view", ["bvid":bvid]) as? Object
+        return data?["desc"] as? String ?? ""
+    }
 }

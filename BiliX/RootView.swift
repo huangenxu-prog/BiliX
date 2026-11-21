@@ -2,21 +2,31 @@ import SwiftUI
 import WebKit
 
 struct RootView: View {
+    @StateObject private var library = LocalLibrary()
     var body: some View {
         TabView {
             DiscoverView()
                 .tabItem { Label("发现", systemImage: "play.rectangle") }
-            NavigationStack { PlaceholderView(title: "收藏", subtitle: "稍后接入本地收藏") }
+            NavigationStack { SavedVideos(title: "收藏", videos: library.favorites) }
                 .tabItem { Label("收藏", systemImage: "bookmark") }
-            NavigationStack { PlaceholderView(title: "设置", subtitle: "BiliX 1.0") }
+            NavigationStack {
+                List {
+                    NavigationLink("观看历史") { SavedVideos(title: "观看历史", videos: library.history) }
+                    LabeledContent("版本", value: "BiliX 1.0")
+                }.navigationTitle("设置")
+            }
                 .tabItem { Label("设置", systemImage: "gearshape") }
         }
+        .environmentObject(library)
+        .preferredColorScheme(.light)
         .background(BiliTheme.background)
     }
 }
 
 struct DiscoverView: View {
     @State private var query = ""
+    @State private var submitted = ""
+    @State private var revision = 0
     @State private var videos: [BiliVideo] = []
     @State private var loading = false
     @State private var error: String?
@@ -28,42 +38,48 @@ struct DiscoverView: View {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                         TextField("搜索 B站视频", text: $query)
                             .submitLabel(.search)
-                            .onSubmit { Task { await search() } }
+                            .onSubmit { submitted = query.trimmingCharacters(in: .whitespacesAndNewlines); revision += 1 }
                             .accessibilityIdentifier("videoSearchField")
                         if !query.isEmpty {
-                            Button { query = ""; videos = []; error = nil } label: {
+                            Button { query = ""; submitted = ""; revision += 1 } label: {
                                 Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                             }
                         }
                     }
                     .padding(14)
                     .background(BiliTheme.divider, in: RoundedRectangle(cornerRadius: 15))
-                    if loading { ProgressView("正在搜索…").frame(maxWidth: .infinity) }
+                    if loading { ProgressView("正在加载…").frame(maxWidth: .infinity) }
                     if let error {
                         ContentUnavailableView("暂时无法获取视频", systemImage: "wifi.exclamationmark", description: Text(error))
+                        Button("重试") { revision += 1 }
                     }
                     if !loading && error == nil && videos.isEmpty {
-                        ContentUnavailableView("搜索视频", systemImage: "play.rectangle", description: Text("输入关键词并点击键盘上的搜索"))
+                        ContentUnavailableView("暂无视频", systemImage: "play.rectangle")
                     }
                     ForEach(videos) { video in
-                        NavigationLink(value: video) { VideoRow(video: video) }
+                        VideoLink(video: video)
                             .buttonStyle(.plain)
                     }
                 }
                 .padding(18)
             }
+            .task(id: revision) { await search() }
             .navigationTitle("发现")
-            .navigationDestination(for: BiliVideo.self) { VideoDetailView(video: $0) }
             .background(BiliTheme.background)
         }
     }
     @MainActor private func search() async {
-        let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !keyword.isEmpty else { return }
+        let keyword = submitted
         loading = true; error = nil; videos = []
-        defer { loading = false }
-        do { videos = try await BiliAPI.search(keyword) }
-        catch { self.error = error.localizedDescription }
+        do {
+            let result = try await (keyword.isEmpty ? BiliAPI.feed() : BiliAPI.search(keyword))
+            try Task.checkCancellation()
+            videos = result
+        } catch {
+            guard !Task.isCancelled else { return }
+            self.error = error.localizedDescription
+        }
+        loading = false
     }
 }
 
@@ -77,6 +93,12 @@ struct VideoRow: View {
                 BiliTheme.divider.overlay { Image(systemName: "play.rectangle").foregroundStyle(.secondary) }
             }
             .frame(width: 142, height: 85)
+            .overlay(alignment: .bottomTrailing) {
+                if !video.duration.isEmpty {
+                    Text(video.duration).font(.caption2).foregroundStyle(.white).padding(3)
+                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4)).padding(4)
+                }
+            }
             .clipped()
             .clipShape(RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 6) {
@@ -93,6 +115,7 @@ struct VideoRow: View {
 
 struct VideoDetailView: View {
     let video: BiliVideo
+    @EnvironmentObject private var library: LocalLibrary
     @State private var expanded = false
     @State private var descriptionText = ""
     @State private var related: [BiliVideo] = []
@@ -100,12 +123,12 @@ struct VideoDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 15) {
-                BiliWebPlayer(bvid: video.bvid)
+                BiliWebPlayer(bvid: video.bvid) { library.watched(video) }
                     .frame(height: 225)
                     .background(.black)
                 Button { expanded.toggle() } label: {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(video.title).font(.headline).foregroundStyle(BiliTheme.primary)
+                        Text(video.title).lineLimit(expanded ? nil : 2).font(.headline).foregroundStyle(BiliTheme.primary)
                         Text(BiliTime.relative(video.publishedAt)).font(.caption).foregroundStyle(BiliTheme.secondary)
                         if expanded && !descriptionText.isEmpty { Text(descriptionText).font(.footnote).foregroundStyle(.secondary) }
                     }
@@ -126,7 +149,7 @@ struct VideoDetailView: View {
                 Text("相关推荐").font(.headline)
                 if let relatedError { Text(relatedError).font(.footnote).foregroundStyle(.secondary) }
                 ForEach(related) { item in
-                    NavigationLink(value: item) { VideoRow(video: item) }.buttonStyle(.plain)
+                    VideoLink(video: item).buttonStyle(.plain)
                 }
             }
             .padding(16)
@@ -149,37 +172,56 @@ struct VideoDetailView: View {
 struct CreatorVideosView: View {
     let author: String
     let mid: Int?
+    @State private var works: [BiliVideo] = []
+    @State private var page = 1
+    @State private var more = true
+    @State private var loading = false
+    @State private var failure: String?
     var body: some View {
-        ContentUnavailableView("作者作品", systemImage: "play.rectangle.on.rectangle",
-            description: Text(mid == nil ? "当前数据缺少作者 ID，暂无法获取作品。" : "作者作品接口待接入验证。"))
-            .navigationTitle(author)
+        ScrollView {
+            LazyVStack(spacing: 16) {
+                ForEach(works) { VideoLink(video: $0) }
+                if let failure { Text(failure).font(.footnote) }
+                if loading { ProgressView() }
+                else if more && mid != nil { Button(failure == nil ? "加载更多" : "重试") { Task { await load() } } }
+                else if works.isEmpty { Text(mid == nil ? "缺少作者 ID" : "暂无公开视频") }
+            }.padding()
+        }.navigationTitle(author).task { if works.isEmpty { await load() } }
+    }
+    @MainActor private func load() async {
+        guard let mid, !loading, more else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            let (items, hasMore) = try await BiliAPI.creator(mid, page: page)
+            let known = Set(works.map(\.id))
+            works += items.filter { !known.contains($0.id) }
+            more = hasMore
+            page += 1
+            failure = nil
+        } catch { failure = error.localizedDescription }
     }
 }
 
-struct BiliWebPlayer: UIViewRepresentable {
-    let bvid: String
-    func makeUIView(context: Context) -> WKWebView {
-        let view = WKWebView()
-        view.scrollView.isScrollEnabled = false
-        view.isOpaque = false
-        view.backgroundColor = .black
-        view.configuration.allowsInlineMediaPlayback = true
-        view.allowsBackForwardNavigationGestures = false
-        return view
-    }
-    func updateUIView(_ view: WKWebView, context: Context) {
-        guard let safe = bvid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://player.bilibili.com/player.html?bvid=\(safe)&autoplay=0") else { return }
-        if view.url?.absoluteString != url.absoluteString { view.load(URLRequest(url: url)) }
+struct VideoLink: View {
+    @EnvironmentObject private var library: LocalLibrary
+    let video: BiliVideo
+    var body: some View {
+        NavigationLink { VideoDetailView(video: video) } label: { VideoRow(video: video) }
+            .buttonStyle(.plain).contextMenu {
+                Button(library.contains(video) ? "取消收藏" : "收藏") { library.toggle(video) }
+            }
     }
 }
 
-struct PlaceholderView: View {
+struct SavedVideos: View {
     let title: String
-    let subtitle: String
+    let videos: [BiliVideo]
     var body: some View {
-        ContentUnavailableView(title, systemImage: "rectangle.stack", description: Text(subtitle))
-            .navigationTitle(title)
+        ScrollView {
+            LazyVStack(spacing: 16) { ForEach(videos) { VideoLink(video: $0) } }.padding()
+        }.overlay { if videos.isEmpty { ContentUnavailableView("暂无" + title, systemImage: "play.rectangle") } }
+        .navigationTitle(title)
     }
 }
 

@@ -7,9 +7,24 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.2"
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate project
         run: xcodegen generate
       - name: Build for simulator
         run: xcodebuild -project BiliX.xcodeproj -scheme BiliX -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Build iPhone application
+        run: xcodebuild -project BiliX.xcodeproj -scheme BiliX -configuration Release -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Package unsigned IPA for device signing
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/BiliX.app Payload/
+          /usr/bin/ditto -c -k --keepParent Payload BiliX-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BiliX-unsigned
+          path: BiliX-unsigned.ipa
