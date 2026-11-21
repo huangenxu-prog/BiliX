@@ -36,6 +36,7 @@ struct DiscoverView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var paginationNotice: String?
+    @State private var refreshing = false
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -91,7 +92,7 @@ struct DiscoverView: View {
                                 .foregroundStyle(BiliTheme.secondary)
                                 .frame(maxWidth: .infinity)
                         }
-                    } else if !hasMore && videos.isEmpty {
+                    } else if videos.isEmpty {
                         ContentUnavailableView("暂无视频", systemImage: "play.rectangle")
                     }
                 }
@@ -111,7 +112,7 @@ struct DiscoverView: View {
                     error = nil
                     paginationNotice = nil
                 }
-                if nextPage == 1 { await loadPage(revision) }
+                if nextPage == 1 && !refreshing { await loadPage(revision) }
             }
             .onDisappear { playing = nil }
             .navigationTitle("发现")
@@ -119,23 +120,52 @@ struct DiscoverView: View {
         }
     }
     @MainActor private func refreshCurrentFeed() async {
-        // Pull-to-refresh replaces the current category/search results from page 1.
-        // Increment revision to invalidate results from any previous request.
-        revision += 1
-        let current = revision
-        loadedRevision = current
-        playing = nil
-        videos = []
-        nextPage = 1
-        hasMore = true
-        loading = false
-        error = nil
-        paginationNotice = nil
-        await loadPage(current)
+        guard !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
+
+        // Keep existing cards visible while fetching. A failed refresh must never
+        // blank the current feed or reset its usable pagination state.
+        let expectedRevision = revision
+        let currentKeyword = submitted
+        let currentRegion = region
+        do {
+            let fresh: [BiliVideo]
+            if !currentKeyword.isEmpty {
+                fresh = try await BiliAPI.search(currentKeyword, page: 1)
+            } else if currentRegion == 0 {
+                fresh = try await BiliAPI.feed(page: 1)
+            } else {
+                fresh = try await BiliAPI.region(currentRegion, page: 1)
+            }
+            guard revision == expectedRevision, !Task.isCancelled else { return }
+            guard !fresh.isEmpty else {
+                paginationNotice = "刷新未获取到视频，已保留原列表"
+                return
+            }
+
+            // Invalidate in-flight older loads only after fresh content is ready.
+            revision += 1
+            loadedRevision = revision
+            playing = nil
+            videos = fresh
+            nextPage = 2
+            hasMore = true
+            loading = false
+            error = nil
+            paginationNotice = nil
+        } catch {
+            guard revision == expectedRevision, !Task.isCancelled else { return }
+            if videos.isEmpty {
+                self.error = error.localizedDescription
+            } else {
+                paginationNotice = "刷新失败，已保留原列表"
+            }
+        }
     }
 
     @MainActor private func loadPage(_ requestRevision: Int) async {
-        guard revision == requestRevision, loadedRevision == revision, !loading else { return }
+        guard revision == requestRevision, loadedRevision == revision, !loading, !refreshing else { return }
         loading = true
         error = nil
         paginationNotice = nil
