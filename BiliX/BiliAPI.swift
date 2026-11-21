@@ -85,29 +85,21 @@ enum BiliAPI {
     }
 
     static func region(_ id: Int, page: Int) async throws -> [BiliVideo] {
-        // Prefer the dedicated region feed. The legacy newlist endpoint often
-        // returns an overlapping recent-upload window on subsequent pages.
-        var combined: [BiliVideo] = []
-        var failures: [Error] = []
-        for (path, pageSize) in [
-            ("/x/web-interface/dynamic/region", "30"),
-            ("/x/web-interface/newlist", "20")
-        ] {
-            do {
-                let data = try await payload(path, [
-                    "rid": String(id), "ps": pageSize, "pn": String(page)
-                ]) as? Object
-                combined += try videos(data?["archives"])
-            } catch {
-                failures.append(error)
-            }
-        }
-        var seen = Set<String>()
-        let unique = combined.filter { seen.insert($0.bvid).inserted }
-        if unique.isEmpty, let failure = failures.first, failures.count == 2 {
-            throw failure
-        }
-        return unique
+        // Verified in GitHub Actions: category-filtered search returns distinct
+        // pages where newlist repeats its first page and dynamic/region is -404.
+        let keywords: [Int: String] = [
+            181: "影视", 3: "音乐", 36: "知识", 188: "科技",
+            160: "生活", 4: "游戏", 1: "动画"
+        ]
+        let keyword = keywords[id] ?? "视频"
+        let data = try await payload("/x/web-interface/search/type", [
+            "search_type": "video",
+            "keyword": keyword,
+            "tids": String(id),
+            "order": "pubdate",
+            "page": String(page)
+        ]) as? Object
+        return try videos(data?["result"])
     }
     static func feed(page: Int) async throws -> [BiliVideo] {
         let data = try await payload("/x/web-interface/wbi/index/top/feed/rcmd", ["ps":"20", "fresh_type":"3", "fresh_idx":String(page), "fresh_idx_1h":String(page)], signed: true) as? Object
