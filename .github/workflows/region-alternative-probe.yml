@@ -1,0 +1,38 @@
+name: BiliX Alternative Region Probe
+on:
+  push:
+    paths:
+      - '.github/workflows/region-alternative-probe.yml'
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Probe paginated region ranking and search
+        run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,json,datetime,time
+          today=datetime.datetime.now(datetime.timezone.utc)
+          for rid in [181,3]:
+            for kind in ["newlist_rank","search"]:
+              seen=set()
+              for page in [1,2,3,4,5]:
+                if kind=="newlist_rank":
+                  q={"search_type":"video","view_type":"hot_rank","order":"click","cate_id":rid,"page":page,"pagesize":30,"time_from":(today-datetime.timedelta(days=30)).strftime("%Y%m%d"),"time_to":today.strftime("%Y%m%d")}
+                  path="/x/web-interface/newlist_rank"
+                else:
+                  q={"search_type":"video","keyword":"影视" if rid==181 else "音乐","tids":rid,"order":"pubdate","page":page}
+                  path="/x/web-interface/search/type"
+                req=urllib.request.Request("https://api.bilibili.com"+path+"?"+urllib.parse.urlencode(q),headers={"Referer":"https://www.bilibili.com/","User-Agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1"})
+                try:
+                  with urllib.request.urlopen(req,timeout=12) as r: data=json.load(r)
+                  rows=(data.get("data") or {}).get("result") or []
+                  ids={x.get("bvid") for x in rows if isinstance(x,dict) and x.get("bvid")}
+                  fresh=ids-seen
+                  seen.update(ids)
+                  print(json.dumps({"rid":rid,"source":kind,"page":page,"code":data.get("code"),"message":data.get("message"),"rows":len(rows),"unique":len(ids),"new":len(fresh),"total":len(seen)},ensure_ascii=False),flush=True)
+                except Exception as e:
+                  print(json.dumps({"rid":rid,"source":kind,"page":page,"error":str(e)}),flush=True)
+                time.sleep(.2)
+          PY
