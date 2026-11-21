@@ -13,6 +13,8 @@ jobs:
           xcode-version: "26.2"
       - name: Install XcodeGen
         run: brew install xcodegen
+      - name: Render BiliX app icon
+        run: swift scripts/render-icon.swift
       - name: Generate project
         run: xcodegen generate
       - name: Build for simulator
