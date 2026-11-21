@@ -39,8 +39,9 @@ struct DiscoverView: View {
     @State private var refreshing = false
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
                     HStack {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                         TextField("搜索 B站视频", text: $query)
@@ -96,11 +97,22 @@ struct DiscoverView: View {
                         ContentUnavailableView("暂无视频", systemImage: "play.rectangle")
                     }
                 }
-                .padding(18)
-            }
-            .refreshable {
-                await refreshCurrentFeed()
-            }
+                    .padding(18)
+                    .id("discoverFeedStart")
+                }
+                .scrollBounceBehavior(.always, axes: .vertical)
+                .refreshable {
+                    await refreshCurrentFeed()
+                    // After the refresh control releases its extra inset, reset
+                    // the underlying scroll position. iOS can otherwise retain
+                    // the pull-down offset with a large navigation title.
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(180))
+                        withAnimation(.easeOut(duration: 0.22)) {
+                            scrollProxy.scrollTo("discoverFeedStart", anchor: .top)
+                        }
+                    }
+                }
             .task(id: revision) {
                 if loadedRevision != revision {
                     loadedRevision = revision
@@ -117,6 +129,7 @@ struct DiscoverView: View {
             .onDisappear { playing = nil }
             .navigationTitle("发现")
             .background(BiliTheme.background)
+            }
         }
     }
     @MainActor private func refreshCurrentFeed() async {
