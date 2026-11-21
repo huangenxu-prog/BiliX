@@ -97,6 +97,9 @@ struct DiscoverView: View {
                 }
                 .padding(18)
             }
+            .refreshable {
+                await refreshCurrentFeed()
+            }
             .task(id: revision) {
                 if loadedRevision != revision {
                     loadedRevision = revision
@@ -115,6 +118,22 @@ struct DiscoverView: View {
             .background(BiliTheme.background)
         }
     }
+    @MainActor private func refreshCurrentFeed() async {
+        // Pull-to-refresh replaces the current category/search results from page 1.
+        // Increment revision to invalidate results from any previous request.
+        revision += 1
+        let current = revision
+        loadedRevision = current
+        playing = nil
+        videos = []
+        nextPage = 1
+        hasMore = true
+        loading = false
+        error = nil
+        paginationNotice = nil
+        await loadPage(current)
+    }
+
     @MainActor private func loadPage(_ requestRevision: Int) async {
         guard revision == requestRevision, loadedRevision == revision, !loading else { return }
         loading = true
