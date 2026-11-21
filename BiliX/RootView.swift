@@ -27,6 +27,9 @@ struct DiscoverView: View {
     @State private var query = ""
     @State private var submitted = ""
     @State private var revision = 0
+    @State private var region = 0
+    @State private var playing: String?
+    private let regions = [(0,"推荐"), (1,"动画"), (4,"游戏"), (3,"音乐"), (36,"知识"), (188,"科技"), (181,"影视"), (160,"生活")]
     @State private var videos: [BiliVideo] = []
     @State private var loading = false
     @State private var error: String?
@@ -48,6 +51,19 @@ struct DiscoverView: View {
                     }
                     .padding(14)
                     .background(BiliTheme.divider, in: RoundedRectangle(cornerRadius: 15))
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 16) {
+                            ForEach(regions, id: \.0) { item in
+                                Button(item.1) {
+                                    query = ""
+                                    submitted = ""
+                                    region = item.0
+                                    revision += 1
+                                }
+                                .foregroundStyle(region == item.0 && submitted.isEmpty ? BiliTheme.accent : BiliTheme.secondary)
+                            }
+                        }
+                    }.scrollIndicators(.hidden)
                     if loading { ProgressView("正在加载…").frame(maxWidth: .infinity) }
                     if let error {
                         ContentUnavailableView("暂时无法获取视频", systemImage: "wifi.exclamationmark", description: Text(error))
@@ -57,22 +73,26 @@ struct DiscoverView: View {
                         ContentUnavailableView("暂无视频", systemImage: "play.rectangle")
                     }
                     ForEach(videos) { video in
-                        VideoLink(video: video)
-                            .buttonStyle(.plain)
+                        FeedCard(video: video, playing: $playing)
                     }
                 }
                 .padding(18)
             }
             .task(id: revision) { await search() }
+            .onDisappear { playing = nil }
             .navigationTitle("发现")
             .background(BiliTheme.background)
         }
     }
     @MainActor private func search() async {
         let keyword = submitted
+        playing = nil
         loading = true; error = nil; videos = []
         do {
-            let result = try await (keyword.isEmpty ? BiliAPI.feed() : BiliAPI.search(keyword))
+            let result: [BiliVideo]
+            if !keyword.isEmpty { result = try await BiliAPI.search(keyword) }
+            else if region == 0 { result = try await BiliAPI.feed() }
+            else { result = try await BiliAPI.region(region) }
             try Task.checkCancellation()
             videos = result
         } catch {

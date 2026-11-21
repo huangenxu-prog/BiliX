@@ -84,6 +84,10 @@ enum BiliAPI {
         }
     }
 
+    static func region(_ id: Int) async throws -> [BiliVideo] {
+        let data = try await payload("/x/web-interface/newlist", ["rid":String(id), "ps":"20", "pn":"1"]) as? Object
+        return try videos(data?["archives"])
+    }
     static func feed() async throws -> [BiliVideo] {
         let data = try await payload("/x/web-interface/wbi/index/top/feed/rcmd", ["ps":"20", "fresh_type":"3", "fresh_idx":"1"], signed: true) as? Object
         return try videos(data?["item"])

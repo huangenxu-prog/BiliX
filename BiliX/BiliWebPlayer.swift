@@ -3,6 +3,7 @@ import WebKit
 
 struct BiliWebPlayer: UIViewRepresentable {
     let bvid: String
+    var autoplay = false
     let played: () -> Void
 
     final class Coordinator: NSObject, WKScriptMessageHandler {
@@ -19,6 +20,7 @@ struct BiliWebPlayer: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(played) }
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        if autoplay { config.mediaTypesRequiringUserActionForPlayback = [] }
         config.allowsInlineMediaPlayback = true
         config.preferences.isElementFullscreenEnabled = true
         config.userContentController.add(context.coordinator, name: "played")
@@ -59,7 +61,7 @@ struct BiliWebPlayer: UIViewRepresentable {
         context.coordinator.id = bvid
         context.coordinator.reported = false
         var url = URLComponents(string: "https://player.bilibili.com/player.html")!
-        url.queryItems = ["bvid":bvid, "autoplay":"0", "danmaku":"0"].map { URLQueryItem(name: $0.key, value: $0.value) }
+        url.queryItems = ["bvid":bvid, "autoplay":autoplay ? "1" : "0", "danmaku":"0"].map { URLQueryItem(name: $0.key, value: $0.value) }
         web.load(URLRequest(url: url.url!))
     }
     static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
