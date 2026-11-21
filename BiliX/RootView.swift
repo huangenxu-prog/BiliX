@@ -75,11 +75,27 @@ struct DiscoverView: View {
                     } else if loading {
                         ProgressView().frame(maxWidth: .infinity)
                     } else if hasMore && !videos.isEmpty {
-                        Color.clear.frame(height: 1)
-                            .onAppear {
-                                let current = revision
-                                Task { await loadPage(current) }
+                        // Explicit fallback: a one-point onAppear sentinel is not
+                        // reliable on every SwiftUI scroll/layout transition.
+                        Button {
+                            let current = revision
+                            Task { await loadPage(current) }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text("加载更多")
+                                Image(systemName: "chevron.down")
                             }
+                            .font(.footnote)
+                            .foregroundStyle(BiliTheme.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 18)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .onAppear {
+                            let current = revision
+                            Task { await loadPage(current) }
+                        }
                     } else if !hasMore && videos.isEmpty {
                         ContentUnavailableView("暂无视频", systemImage: "play.rectangle")
                     }
