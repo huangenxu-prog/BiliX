@@ -12,7 +12,6 @@ struct RootView: View {
             NavigationStack {
                 List {
                     NavigationLink("观看历史") { SavedVideos(title: "观看历史", videos: library.history) }
-                    LabeledContent("版本", value: "BiliX 1.0")
                 }.navigationTitle("设置")
             }
                 .tabItem { Label("设置", systemImage: "gearshape") }
@@ -29,7 +28,7 @@ struct DiscoverView: View {
     @State private var revision = 0
     @State private var region = 0
     @State private var playing: String?
-    private let regions = [(0,"推荐"), (1,"动画"), (4,"游戏"), (3,"音乐"), (36,"知识"), (188,"科技"), (181,"影视"), (160,"生活")]
+    private let regions = [(0,"推荐"), (181,"影视"), (3,"音乐"), (36,"知识"), (188,"科技"), (160,"生活"), (4,"游戏"), (1,"动画")]
     @State private var videos: [BiliVideo] = []
     @State private var loading = false
     @State private var error: String?
