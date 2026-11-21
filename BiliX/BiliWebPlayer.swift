@@ -25,11 +25,34 @@ struct BiliWebPlayer: UIViewRepresentable {
         config.preferences.isElementFullscreenEnabled = true
         config.userContentController.add(context.coordinator, name: "played")
         let script = """
+        const bilixShouldAutoplay = \(autoplay ? "true" : "false");
+        const bilixAutoplayDeadline = Date.now() + 15000;
+        function attemptStart(video) {
+            // Bilibili's autoplay=1 parameter alone often only opens its player.
+            // Try HTMLMediaElement.play() once the embedded video becomes ready.
+            // Stop retrying after actual playback so a manual pause stays paused.
+            if (!bilixShouldAutoplay || video.dataset.bilixPlayed === '1' ||
+                Date.now() > bilixAutoplayDeadline || !video.paused) return;
+            const promise = video.play();
+            if (promise && typeof promise.catch === 'function') {
+                promise.catch(() => { /* Autoplay may still require user interaction. */ });
+            }
+        }
         function configure(video) {
             video.controls = true;
-            if (video.dataset.bilix) return;
+            if (video.dataset.bilix) {
+                attemptStart(video);
+                return;
+            }
             video.dataset.bilix = '1';
-            video.addEventListener('playing', () => window.webkit.messageHandlers.played.postMessage(true));
+            video.addEventListener('playing', () => {
+                video.dataset.bilixPlayed = '1';
+                window.webkit.messageHandlers.played.postMessage(true);
+            });
+            ['loadedmetadata', 'loadeddata', 'canplay'].forEach(name =>
+                video.addEventListener(name, () => attemptStart(video), { once: true })
+            );
+            attemptStart(video);
             const controls = document.createElement('div');
             controls.style.cssText = 'position:absolute;top:8px;right:8px;display:flex;gap:6px;z-index:2147483647';
             const speed = document.createElement('select');
@@ -48,6 +71,14 @@ struct BiliWebPlayer: UIViewRepresentable {
         function refresh() { document.querySelectorAll('video').forEach(configure); }
         refresh();
         new MutationObserver(refresh).observe(document.documentElement, {childList:true, subtree:true});
+        // The Bilibili player can create its video element asynchronously,
+        // after the initial page and script have finished loading.
+        if (bilixShouldAutoplay) {
+            const poll = setInterval(() => {
+                refresh();
+                if (Date.now() > bilixAutoplayDeadline) clearInterval(poll);
+            }, 500);
+        }
         """
         config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: false))
         let web = WKWebView(frame: .zero, configuration: config)
