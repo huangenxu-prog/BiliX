@@ -138,7 +138,8 @@ struct DiscoverView: View {
             var known = Set(videos.map(\.id))
             var additions: [BiliVideo] = []
             var reachedEnd = false
-            for _ in 0..<3 {
+            // Fetch enough pages to fill a useful batch, not just one new item.
+            for _ in 0..<6 {
                 let result: [BiliVideo]
                 if !submitted.isEmpty { result = try await BiliAPI.search(submitted, page: nextPage) }
                 else if region == 0 { result = try await BiliAPI.feed(page: nextPage) }
@@ -151,7 +152,7 @@ struct DiscoverView: View {
                 }
                 let unique = result.filter { known.insert($0.id).inserted }
                 additions.append(contentsOf: unique)
-                if !unique.isEmpty { break }
+                if additions.count >= 15 { break }
             }
             videos.append(contentsOf: additions)
             // Never hide the manual retry control based solely on duplicates.
