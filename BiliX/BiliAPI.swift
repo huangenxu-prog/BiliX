@@ -85,22 +85,29 @@ enum BiliAPI {
     }
 
     static func region(_ id: Int, page: Int) async throws -> [BiliVideo] {
-        let data = try await payload("/x/web-interface/newlist", ["rid":String(id), "ps":"20", "pn":String(page)]) as? Object
-        let primary = try videos(data?["archives"])
-        // The recent-upload endpoint can repeat the same small window across pages.
-        // The region dynamic endpoint is an independent source for this category.
-        if page > 1 {
+        // Prefer the dedicated region feed. The legacy newlist endpoint often
+        // returns an overlapping recent-upload window on subsequent pages.
+        var combined: [BiliVideo] = []
+        var failures: [Error] = []
+        for (path, pageSize) in [
+            ("/x/web-interface/dynamic/region", "30"),
+            ("/x/web-interface/newlist", "20")
+        ] {
             do {
-                let alternative = try await payload("/x/web-interface/dynamic/region", ["rid":String(id), "ps":"30", "pn":String(page)]) as? Object
-                let secondary = try videos(alternative?["archives"])
-                var seen = Set<String>()
-                return (primary + secondary).filter { seen.insert($0.bvid).inserted }
+                let data = try await payload(path, [
+                    "rid": String(id), "ps": pageSize, "pn": String(page)
+                ]) as? Object
+                combined += try videos(data?["archives"])
             } catch {
-                // Keep the working recent-upload results when the alternative is blocked.
-                return primary
+                failures.append(error)
             }
         }
-        return primary
+        var seen = Set<String>()
+        let unique = combined.filter { seen.insert($0.bvid).inserted }
+        if unique.isEmpty, let failure = failures.first, failures.count == 2 {
+            throw failure
+        }
+        return unique
     }
     static func feed(page: Int) async throws -> [BiliVideo] {
         let data = try await payload("/x/web-interface/wbi/index/top/feed/rcmd", ["ps":"20", "fresh_type":"3", "fresh_idx":String(page), "fresh_idx_1h":String(page)], signed: true) as? Object
