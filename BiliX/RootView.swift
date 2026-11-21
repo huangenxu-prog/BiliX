@@ -30,6 +30,9 @@ struct DiscoverView: View {
     @State private var playing: String?
     private let regions = [(0,"推荐"), (181,"影视"), (3,"音乐"), (36,"知识"), (188,"科技"), (160,"生活"), (4,"游戏"), (1,"动画")]
     @State private var videos: [BiliVideo] = []
+    @State private var loadedRevision: Int?
+    @State private var nextPage = 1
+    @State private var hasMore = true
     @State private var loading = false
     @State private var error: String?
     var body: some View {
@@ -63,42 +66,63 @@ struct DiscoverView: View {
                             }
                         }
                     }.scrollIndicators(.hidden)
-                    if loading { ProgressView("正在加载…").frame(maxWidth: .infinity) }
-                    if let error {
-                        ContentUnavailableView("暂时无法获取视频", systemImage: "wifi.exclamationmark", description: Text(error))
-                        Button("重试") { revision += 1 }
-                    }
-                    if !loading && error == nil && videos.isEmpty {
-                        ContentUnavailableView("暂无视频", systemImage: "play.rectangle")
-                    }
                     ForEach(videos) { video in
                         FeedCard(video: video, playing: $playing)
+                    }
+                    if let error {
+                        Text(error).font(.footnote).foregroundStyle(BiliTheme.secondary)
+                        Button("重试") { Task { await loadPage(revision) } }
+                    } else if loading {
+                        ProgressView().frame(maxWidth: .infinity)
+                    } else if hasMore && !videos.isEmpty {
+                        Color.clear.frame(height: 1)
+                            .onAppear {
+                                let current = revision
+                                Task { await loadPage(current) }
+                            }
+                    } else if !hasMore && videos.isEmpty {
+                        ContentUnavailableView("暂无视频", systemImage: "play.rectangle")
                     }
                 }
                 .padding(18)
             }
-            .task(id: revision) { await search() }
+            .task(id: revision) {
+                if loadedRevision != revision {
+                    loadedRevision = revision
+                    playing = nil
+                    videos = []
+                    nextPage = 1
+                    loading = false
+                    hasMore = true
+                    error = nil
+                }
+                if nextPage == 1 { await loadPage(revision) }
+            }
             .onDisappear { playing = nil }
             .navigationTitle("发现")
             .background(BiliTheme.background)
         }
     }
-    @MainActor private func search() async {
-        let keyword = submitted
-        playing = nil
-        loading = true; error = nil; videos = []
+    @MainActor private func loadPage(_ requestRevision: Int) async {
+        guard revision == requestRevision, loadedRevision == revision, hasMore, !loading else { return }
+        loading = true
+        error = nil
+        defer { if revision == requestRevision { loading = false } }
         do {
             let result: [BiliVideo]
-            if !keyword.isEmpty { result = try await BiliAPI.search(keyword) }
-            else if region == 0 { result = try await BiliAPI.feed() }
-            else { result = try await BiliAPI.region(region) }
-            try Task.checkCancellation()
-            videos = result
+            if !submitted.isEmpty { result = try await BiliAPI.search(submitted, page: nextPage) }
+            else if region == 0 { result = try await BiliAPI.feed(page: nextPage) }
+            else { result = try await BiliAPI.region(region, page: nextPage) }
+            guard revision == requestRevision, !Task.isCancelled else { return }
+            let known = Set(videos.map(\.id))
+            let additions = result.filter { !known.contains($0.id) }
+            videos.append(contentsOf: additions)
+            nextPage += 1
+            hasMore = !additions.isEmpty
         } catch {
-            guard !Task.isCancelled else { return }
+            guard revision == requestRevision, !Task.isCancelled else { return }
             self.error = error.localizedDescription
         }
-        loading = false
     }
 }
 

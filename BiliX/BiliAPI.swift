@@ -84,16 +84,16 @@ enum BiliAPI {
         }
     }
 
-    static func region(_ id: Int) async throws -> [BiliVideo] {
-        let data = try await payload("/x/web-interface/newlist", ["rid":String(id), "ps":"20", "pn":"1"]) as? Object
+    static func region(_ id: Int, page: Int) async throws -> [BiliVideo] {
+        let data = try await payload("/x/web-interface/newlist", ["rid":String(id), "ps":"20", "pn":String(page)]) as? Object
         return try videos(data?["archives"])
     }
-    static func feed() async throws -> [BiliVideo] {
-        let data = try await payload("/x/web-interface/wbi/index/top/feed/rcmd", ["ps":"20", "fresh_type":"3", "fresh_idx":"1"], signed: true) as? Object
+    static func feed(page: Int) async throws -> [BiliVideo] {
+        let data = try await payload("/x/web-interface/wbi/index/top/feed/rcmd", ["ps":"20", "fresh_type":"3", "fresh_idx":String(page), "fresh_idx_1h":String(page)], signed: true) as? Object
         return try videos(data?["item"])
     }
-    static func search(_ keyword: String) async throws -> [BiliVideo] {
-        let data = try await payload("/x/web-interface/wbi/search/type", ["search_type":"video", "keyword":keyword, "page":"1"], signed: true) as? Object
+    static func search(_ keyword: String, page: Int) async throws -> [BiliVideo] {
+        let data = try await payload("/x/web-interface/wbi/search/type", ["search_type":"video", "keyword":keyword, "page":String(page)], signed: true) as? Object
         return try videos(data?["result"])
     }
     static func creator(_ mid: Int, page: Int) async throws -> ([BiliVideo], Bool) {
