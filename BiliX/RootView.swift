@@ -109,16 +109,28 @@ struct DiscoverView: View {
         error = nil
         defer { if revision == requestRevision { loading = false } }
         do {
-            let result: [BiliVideo]
-            if !submitted.isEmpty { result = try await BiliAPI.search(submitted, page: nextPage) }
-            else if region == 0 { result = try await BiliAPI.feed(page: nextPage) }
-            else { result = try await BiliAPI.region(region, page: nextPage) }
-            guard revision == requestRevision, !Task.isCancelled else { return }
-            let known = Set(videos.map(\.id))
-            let additions = result.filter { !known.contains($0.id) }
+            // Some B站 category pages overlap heavily. A duplicate-only page
+            // does not prove the feed has ended; inspect a few subsequent pages.
+            var known = Set(videos.map(\.id))
+            var additions: [BiliVideo] = []
+            var reachedEnd = false
+            for _ in 0..<3 {
+                let result: [BiliVideo]
+                if !submitted.isEmpty { result = try await BiliAPI.search(submitted, page: nextPage) }
+                else if region == 0 { result = try await BiliAPI.feed(page: nextPage) }
+                else { result = try await BiliAPI.region(region, page: nextPage) }
+                guard revision == requestRevision, !Task.isCancelled else { return }
+                nextPage += 1
+                if result.isEmpty {
+                    reachedEnd = true
+                    break
+                }
+                let unique = result.filter { known.insert($0.id).inserted }
+                additions.append(contentsOf: unique)
+                if !unique.isEmpty { break }
+            }
             videos.append(contentsOf: additions)
-            nextPage += 1
-            hasMore = !additions.isEmpty
+            hasMore = !reachedEnd && !additions.isEmpty
         } catch {
             guard revision == requestRevision, !Task.isCancelled else { return }
             self.error = error.localizedDescription
