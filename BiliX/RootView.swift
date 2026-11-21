@@ -67,8 +67,15 @@ struct DiscoverView: View {
                             }
                         }
                     }.scrollIndicators(.hidden)
-                    ForEach(videos) { video in
+                    ForEach(Array(videos.enumerated()), id: \.element.id) { index, video in
                         FeedCard(video: video, playing: $playing)
+                            .onAppear {
+                                // Prefetch when the user scrolls near the end.
+                                // This also works when the footer is not visible.
+                                guard hasMore, index >= videos.count - 4 else { return }
+                                let current = revision
+                                Task { await loadPage(current) }
+                            }
                     }
                     if let error {
                         Text(error).font(.footnote).foregroundStyle(BiliTheme.secondary)
@@ -76,30 +83,12 @@ struct DiscoverView: View {
                     } else if loading {
                         ProgressView().frame(maxWidth: .infinity)
                     } else if !videos.isEmpty {
-                        // Explicit fallback: a one-point onAppear sentinel is not
-                        // reliable on every SwiftUI scroll/layout transition.
-                        Button {
-                            let current = revision
-                            Task { await loadPage(current) }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text(paginationNotice == nil ? "加载更多" : "继续尝试加载")
-                                Image(systemName: "chevron.down")
-                            }
-                            .font(.footnote)
-                            .foregroundStyle(BiliTheme.secondary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 18)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .onAppear {
-                            guard hasMore else { return }
-                            let current = revision
-                            Task { await loadPage(current) }
-                        }
+                        // No manual "load more" button: scroll near the last cards
+                        // to fetch the next batch automatically.
                         if let paginationNotice {
-                            Text(paginationNotice).font(.caption2).foregroundStyle(BiliTheme.secondary)
+                            Text(paginationNotice)
+                                .font(.caption2)
+                                .foregroundStyle(BiliTheme.secondary)
                                 .frame(maxWidth: .infinity)
                         }
                     } else if !hasMore && videos.isEmpty {
