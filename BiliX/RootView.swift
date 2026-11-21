@@ -137,9 +137,11 @@ struct DiscoverView: View {
                 nextPage += 1
                 if result.isEmpty {
                     reachedEnd = true
+                    print("[BiliX][pagination] region=\(region) page=\(nextPage - 1) empty response")
                     break
                 }
                 let unique = result.filter { known.insert($0.id).inserted }
+                print("[BiliX][pagination] region=\(region) page=\(nextPage - 1) received=\(result.count) new=\(unique.count)")
                 additions.append(contentsOf: unique)
                 if additions.count >= 15 { break }
             }
@@ -148,7 +150,7 @@ struct DiscoverView: View {
             // Avoid automatic request loops when an endpoint returns no new items.
             hasMore = !reachedEnd && !additions.isEmpty
             if additions.isEmpty {
-                paginationNotice = reachedEnd ? "当前接口返回空页，点击可重新尝试" : "连续几页内容重复，点击可继续查找"
+                paginationNotice = reachedEnd ? "当前分类接口没有返回更多视频" : "当前分类接口连续返回重复视频"
             }
         } catch {
             guard revision == requestRevision, !Task.isCancelled else { return }
