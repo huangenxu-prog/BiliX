@@ -97,8 +97,9 @@ enum BiliAPI {
             "keyword": keyword,
             "tids": String(id),
             "order": "pubdate",
-            "page": String(page)
-        ]) as? Object
+            "page": String(page),
+            "page_size": "20"
+        ], signed: true) as? Object
         return try videos(data?["result"])
     }
     static func feed(page: Int) async throws -> [BiliVideo] {
