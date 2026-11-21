@@ -1,0 +1,20 @@
+name: BiliX
+options:
+  bundleIdPrefix: com.huangenxu
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    SWIFT_VERSION: "5.9"
+targets:
+  BiliX:
+    type: application
+    platform: iOS
+    sources: [BiliX]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.huangenxu.BiliX
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
