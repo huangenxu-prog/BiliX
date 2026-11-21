@@ -2,9 +2,18 @@ import AppKit
 
 // BiliX icon: white background, pink television/play mark and orbit.
 let size = 1024
-let image = NSImage(size: NSSize(width: size, height: size))
-image.lockFocus()
-defer { image.unlockFocus() }
+guard let bitmap = NSBitmapImageRep(
+    bitmapDataPlanes: nil,
+    pixelsWide: size, pixelsHigh: size,
+    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+    isPlanar: false, colorSpaceName: .deviceRGB,
+    bytesPerRow: 0, bitsPerPixel: 0
+), let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+    fatalError("Cannot allocate icon bitmap")
+}
+NSGraphicsContext.saveGraphicsState()
+NSGraphicsContext.current = context
+defer { NSGraphicsContext.restoreGraphicsState() }
 let canvas = NSRect(x: 0, y: 0, width: size, height: size)
 NSColor.white.setFill()
 canvas.fill()
@@ -57,9 +66,8 @@ orbit.lineCapStyle = .round
 pink(0.70).setStroke()
 orbit.stroke()
 
-guard let tiff = image.tiffRepresentation,
-      let bitmap = NSBitmapImageRep(data: tiff),
-      let png = bitmap.representation(using: .png, properties: [:]) else {
+context.flushGraphics()
+guard let png = bitmap.representation(using: .png, properties: [:]) else {
     fatalError("Cannot render icon")
 }
 let destination = "BiliX/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
